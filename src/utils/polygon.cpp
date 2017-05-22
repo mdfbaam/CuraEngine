@@ -1,4 +1,6 @@
-/** Copyright (C) 2015 Ultimaker - Released under terms of the AGPLv3 License */
+//Copyright (c) 2017 Ultimaker B.V.
+//CuraEngine is released under the terms of the AGPLv3 or higher.
+
 #include "polygon.h"
 
 #include "linearAlg2D.h" // pointLiesOnTheRightOfLine
@@ -8,9 +10,9 @@
 namespace cura 
 {
 
-bool PolygonRef::shorterThan(int64_t check_length) const
+bool ConstPolygonRef::shorterThan(int64_t check_length) const
 {
-    const PolygonRef& polygon = *this;
+    const ConstPolygonRef& polygon = *this;
     const Point* p0 = &polygon.back();
     int64_t length = 0;
     for (const Point& p1 : polygon)
@@ -25,9 +27,9 @@ bool PolygonRef::shorterThan(int64_t check_length) const
     return true;
 }
 
-bool PolygonRef::_inside(Point p, bool border_result) const
+bool ConstPolygonRef::_inside(Point p, bool border_result) const
 {
-    PolygonRef thiss = *this;
+    const ConstPolygonRef thiss = *this;
     if (size() < 1)
     {
         return false;
@@ -51,6 +53,11 @@ bool PolygonRef::_inside(Point p, bool border_result) const
         p0 = p1;
     }
     return (crossings % 2) == 1;
+}
+
+bool Polygons::empty() const
+{
+    return paths.empty();
 }
 
 Polygons Polygons::approxConvexHull(int extra_outset)
@@ -190,6 +197,22 @@ unsigned int Polygons::findInside(Point p, bool border_result)
     return ret;
 }
 
+coord_t Polygons::polyLineLength() const
+{
+    coord_t length = 0;
+    for (unsigned int poly_idx = 0; poly_idx < paths.size(); poly_idx++)
+    {
+        Point p0 = paths[poly_idx][0];
+        for (unsigned int point_idx = 1; point_idx < paths[poly_idx].size(); point_idx++)
+        {
+            Point p1 = paths[poly_idx][point_idx];
+            length += vSize(p0 - p1);
+            p0 = p1;
+        }
+    }
+    return length;
+}
+
 Polygons Polygons::offset(int distance, ClipperLib::JoinType join_type, double miter_limit) const
 {
     Polygons ret;
@@ -200,11 +223,11 @@ Polygons Polygons::offset(int distance, ClipperLib::JoinType join_type, double m
     return ret;
 }
 
-Polygons PolygonRef::offset(int distance, ClipperLib::JoinType joinType, double miter_limit) const
+Polygons ConstPolygonRef::offset(int distance, ClipperLib::JoinType join_type, double miter_limit) const
 {
     Polygons ret;
     ClipperLib::ClipperOffset clipper(miter_limit, 10.0);
-    clipper.AddPath(*path, joinType, ClipperLib::etClosedPolygon);
+    clipper.AddPath(*path, join_type, ClipperLib::etClosedPolygon);
     clipper.MiterLimit = miter_limit;
     clipper.Execute(ret.paths, distance);
     return ret;
@@ -521,7 +544,7 @@ void Polygons::removeEmptyHoles_processPolyTreeNode(const ClipperLib::PolyNode& 
     }
 }
 
-bool PolygonRef::smooth_corner_complex(ListPolygon& poly, const Point p1, ListPolyIt& p0_it, ListPolyIt& p2_it, const int64_t shortcut_length)
+bool ConstPolygonRef::smooth_corner_complex(const Point p1, ListPolyIt& p0_it, ListPolyIt& p2_it, const int64_t shortcut_length)
 {
     // walk away from the corner until the shortcut > shortcut_length or it would smooth a piece inward
     // - walk in both directions untill shortcut > shortcut_length 
@@ -703,7 +726,7 @@ bool PolygonRef::smooth_corner_complex(ListPolygon& poly, const Point p1, ListPo
     return false;
 }
 
-void PolygonRef::smooth_outward_step(const Point p1, const int64_t shortcut_length2, ListPolyIt& p0_it, ListPolyIt& p2_it, bool& forward_is_blocked, bool& backward_is_blocked, bool& forward_is_too_far, bool& backward_is_too_far)
+void ConstPolygonRef::smooth_outward_step(const Point p1, const int64_t shortcut_length2, ListPolyIt& p0_it, ListPolyIt& p2_it, bool& forward_is_blocked, bool& backward_is_blocked, bool& forward_is_too_far, bool& backward_is_too_far)
 {
     const bool forward_has_converged = forward_is_blocked || forward_is_too_far;
     const bool backward_has_converged = backward_is_blocked || backward_is_too_far;
@@ -759,7 +782,7 @@ void PolygonRef::smooth_outward_step(const Point p1, const int64_t shortcut_leng
     }
 }
 
-void PolygonRef::smooth_corner_simple(ListPolygon& poly, const Point p0, const Point p1, const Point p2, const ListPolyIt p0_it, const ListPolyIt p1_it, const ListPolyIt p2_it, const Point v10, const Point v12, const Point v02, const int64_t shortcut_length, float cos_angle)
+void ConstPolygonRef::smooth_corner_simple(const Point p0, const Point p1, const Point p2, const ListPolyIt p0_it, const ListPolyIt p1_it, const ListPolyIt p2_it, const Point v10, const Point v12, const Point v02, const int64_t shortcut_length, float cos_angle)
 {
     //  1----b---->2
     //  ^   /
@@ -849,7 +872,7 @@ void PolygonRef::smooth_corner_simple(ListPolygon& poly, const Point p0, const P
     }
 }
 
-void PolygonRef::smooth_outward(float min_angle, int shortcut_length, PolygonRef result) const
+void ConstPolygonRef::smooth_outward(float min_angle, int shortcut_length, PolygonRef result) const
 {
 // example of smoothed out corner:
 //
@@ -905,11 +928,11 @@ void PolygonRef::smooth_outward(float min_angle, int shortcut_length, PolygonRef
             Point v02 = p2_it.p() - p0_it.p();
             if (vSize2(v02) >= shortcut_length2)
             {
-                smooth_corner_simple(poly, p0, p1, p2, p0_it, p1_it, p2_it, v10, v12, v02, shortcut_length, cos_angle);
+                smooth_corner_simple(p0, p1, p2, p0_it, p1_it, p2_it, v10, v12, v02, shortcut_length, cos_angle);
             }
             else
             {
-                bool remove_poly = smooth_corner_complex(poly, p1, p0_it, p2_it, shortcut_length); // edits p0_it and p2_it!
+                bool remove_poly = smooth_corner_complex(p1, p0_it, p2_it, shortcut_length); // edits p0_it and p2_it!
                 if (remove_poly)
                 {
                     // don't convert ListPolygon into result
@@ -952,7 +975,8 @@ Polygons Polygons::smooth_outward(float max_angle, int shortcut_length)
     return ret;
 }
 
-void PolygonRef::smooth(int remove_length, PolygonRef result)
+
+void ConstPolygonRef::smooth(int remove_length, PolygonRef result) const
 {
 // a typical zigzag with the middle part to be removed by removing (1) :
 //
@@ -967,13 +991,13 @@ void PolygonRef::smooth(int remove_length, PolygonRef result)
 //          |
 //          |
 //          0
-    PolygonRef& thiss = *this;
+    const ConstPolygonRef& thiss = *path;
     ClipperLib::Path* poly = result.path;
     if (size() > 0)
     {
         poly->push_back(thiss[0]);
     }
-    auto is_zigzag = [remove_length](const Point v02, const int64_t v02_size, const Point v12, const int64_t v12_size, const Point v13, const int64_t v13_size, const int64_t dot1, const int64_t dot2)
+    auto is_zigzag = [remove_length](const int64_t v02_size, const int64_t v12_size, const int64_t v13_size, const int64_t dot1, const int64_t dot2)
     {
         if (v12_size > remove_length)
         { // v12 or v13 is too long
@@ -1019,7 +1043,7 @@ void PolygonRef::smooth(int remove_length, PolygonRef result)
         const int64_t dot1 = dot(v02T, v12);
         const Point v13T = turn90CCW(v13);
         const int64_t dot2 = dot(v13T, v12);
-        bool push_point = force_push || !is_zigzag(v02, v02_size, v12, v12_size, v13, v13_size, dot1, dot2);
+        bool push_point = force_push || !is_zigzag(v02_size, v12_size, v13_size, dot1, dot2);
         force_push = false;
         if (push_point)
         {
@@ -1036,12 +1060,12 @@ void PolygonRef::smooth(int remove_length, PolygonRef result)
     }
 }
 
-Polygons Polygons::smooth(int remove_length)
+Polygons Polygons::smooth(int remove_length) const
 {
     Polygons ret;
     for (unsigned int p = 0; p < size(); p++)
     {
-        PolygonRef poly(paths[p]);
+        ConstPolygonRef poly(paths[p]);
         if (poly.size() < 3)
         {
             continue;
@@ -1061,23 +1085,23 @@ Polygons Polygons::smooth(int remove_length)
     return ret;
 }
 
-void PolygonRef::smooth2(int remove_length, PolygonRef result)
+void ConstPolygonRef::smooth2(int remove_length, PolygonRef result) const
 {
-    PolygonRef& thiss = *this;
+    const ConstPolygonRef& thiss = *this;
     ClipperLib::Path* poly = result.path;
-    if (size() > 0)
+    if (thiss.size() > 0)
     {
         poly->push_back(thiss[0]);
     }
-    for (unsigned int poly_idx = 1; poly_idx < size(); poly_idx++)
+    for (unsigned int poly_idx = 1; poly_idx < thiss.size(); poly_idx++)
     {
-        Point& last = thiss[poly_idx - 1];
-        Point& now = thiss[poly_idx];
-        Point& next = thiss[(poly_idx + 1) % size()];
-        if (shorterThen(last - now, remove_length) && shorterThen(now - next, remove_length)) 
+        const Point& last = thiss[poly_idx - 1];
+        const Point& now = thiss[poly_idx];
+        const Point& next = thiss[(poly_idx + 1) % thiss.size()];
+        if (shorterThen(last - now, remove_length) && shorterThen(now - next, remove_length))
         {
             poly_idx++; // skip the next line piece (dont escalate the removal of edges)
-            if (poly_idx < size())
+            if (poly_idx < thiss.size())
             {
                 poly->push_back(thiss[poly_idx]);
             }
@@ -1089,12 +1113,12 @@ void PolygonRef::smooth2(int remove_length, PolygonRef result)
     }
 }
 
-Polygons Polygons::smooth2(int remove_length, int min_area)
+Polygons Polygons::smooth2(int remove_length, int min_area) const
 {
     Polygons ret;
     for (unsigned int p = 0; p < size(); p++)
     {
-        PolygonRef poly(paths[p]);
+        ConstPolygonRef poly(paths[p]);
         if (poly.size() == 0)
         {
             continue;
@@ -1114,6 +1138,17 @@ Polygons Polygons::smooth2(int remove_length, int min_area)
         }
     }
     return ret;
+}
+
+double PolygonsPart::area() const
+{
+    double area = 0;
+    for (unsigned int poly_idx = 0; poly_idx < size(); poly_idx++)
+    {
+        area += operator[](poly_idx).area();
+        // note: holes have negative area
+    }
+    return area;
 }
 
 std::vector<PolygonsPart> Polygons::splitIntoParts(bool unionAll) const
@@ -1147,14 +1182,14 @@ void Polygons::splitIntoParts_processPolyTreeNode(ClipperLib::PolyNode* node, st
     }
 }
 
-unsigned int PartsView::getPartContaining(unsigned int poly_idx, unsigned int* boundary_poly_idx) 
+unsigned int PartsView::getPartContaining(unsigned int poly_idx, unsigned int* boundary_poly_idx) const
 {
-    PartsView& partsView = *this;
+    const PartsView& partsView = *this;
     for (unsigned int part_idx_now = 0; part_idx_now < partsView.size(); part_idx_now++)
     {
-        std::vector<unsigned int>& partView = partsView[part_idx_now];
+        const std::vector<unsigned int>& partView = partsView[part_idx_now];
         if (partView.size() == 0) { continue; }
-        std::vector<unsigned int>::iterator result = std::find(partView.begin(), partView.end(), poly_idx);
+        std::vector<unsigned int>::const_iterator result = std::find(partView.begin(), partView.end(), poly_idx);
         if (result != partView.end()) 
         { 
             if (boundary_poly_idx) { *boundary_poly_idx = partView[0]; }
@@ -1178,7 +1213,7 @@ PolygonsPart PartsView::assemblePart(unsigned int part_idx) const
     return ret;
 }
 
-PolygonsPart PartsView::assemblePartContaining(unsigned int poly_idx, unsigned int* boundary_poly_idx) 
+PolygonsPart PartsView::assemblePartContaining(unsigned int poly_idx, unsigned int* boundary_poly_idx) const
 {
     PolygonsPart ret;
     unsigned int part_idx = getPartContaining(poly_idx, boundary_poly_idx);
@@ -1215,7 +1250,7 @@ void Polygons::splitIntoPartsView_processPolyTreeNode(PartsView& partsView, Poly
         partsView.emplace_back();
         unsigned int pos = partsView.size() - 1;
         partsView[pos].push_back(reordered.size());
-        reordered.add(child->Contour);
+        reordered.add(child->Contour); //TODO: should this steal the internal representation for speed?
         for(int i = 0; i < child->ChildCount(); i++)
         {
             partsView[pos].push_back(reordered.size());

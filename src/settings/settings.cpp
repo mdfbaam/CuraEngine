@@ -93,21 +93,23 @@ void SettingsBase::setSettingInheritBase(std::string key, const SettingsBaseVirt
 
 std::string SettingsBase::getSettingString(std::string key) const
 {
-    if (setting_values.find(key) != setting_values.end())
+    auto value_it = setting_values.find(key);
+    if (value_it != setting_values.end())
     {
-        return setting_values.at(key);
+        return value_it->second;
     }
-    if (setting_inherit_base.find(key) != setting_inherit_base.end())
+    auto inherit_override_it = setting_inherit_base.find(key);
+    if (inherit_override_it != setting_inherit_base.end())
     {
-        return setting_inherit_base.at(key)->getSettingString(key);
+        return inherit_override_it->second->getSettingString(key);
     }
     if (parent)
     {
         return parent->getSettingString(key);
     }
 
-    const_cast<SettingsBase&>(*this).setting_values[key] = "";
-    cura::logWarning("Unregistered setting %s\n", key.c_str());
+    cura::logError("Trying to retrieve unregistered setting with no value given: '%s'\n", key.c_str());
+    std::exit(-1);
     return "";
 }
 
@@ -396,7 +398,7 @@ EZSeamType SettingsBaseVirtual::getSettingAsZSeamType(std::string key) const
     if (value == "shortest")
         return EZSeamType::SHORTEST;
     if (value == "back")
-        return EZSeamType::BACK;
+        return EZSeamType::USER_SPECIFIED;
     return EZSeamType::SHORTEST;
 }
 
@@ -426,7 +428,7 @@ FillPerimeterGapMode SettingsBaseVirtual::getSettingAsFillPerimeterGapMode(std::
     return FillPerimeterGapMode::NOWHERE;
 }
 
-CombingMode SettingsBaseVirtual::getSettingAsCombingMode(std::string key)
+CombingMode SettingsBaseVirtual::getSettingAsCombingMode(std::string key) const
 {
     std::string value = getSettingString(key);
     if (value == "off")
@@ -444,7 +446,7 @@ CombingMode SettingsBaseVirtual::getSettingAsCombingMode(std::string key)
     return CombingMode::ALL;
 }
 
-SupportDistPriority SettingsBaseVirtual::getSettingAsSupportDistPriority(std::string key)
+SupportDistPriority SettingsBaseVirtual::getSettingAsSupportDistPriority(std::string key) const
 {
     std::string value = getSettingString(key);
     if (value == "xy_overrides_z")
@@ -458,6 +460,40 @@ SupportDistPriority SettingsBaseVirtual::getSettingAsSupportDistPriority(std::st
     return SupportDistPriority::XY_OVERRIDES_Z;
 }
 
+std::vector<int> SettingsBaseVirtual::getSettingAsIntegerList(std::string key) const
+{
+    std::vector<int> result;
+    std::string value_string = getSettingString(key);
+    if (!value_string.empty()) {
+        // we're looking to match one or more integer values separated by commas and surrounded by square brackets
+        // note that because the QML RegExpValidator only stops unrecognised characters being input
+        // and doesn't actually barf if the trailing ] is missing, we are lenient here and make it optional
+        std::regex list_contents_regex("\\[([^\\]]*)\\]?");
+        std::smatch list_contents_match;
+        if (std::regex_search(value_string, list_contents_match, list_contents_regex) && list_contents_match.size() > 1)
+        {
+            std::string elements = list_contents_match.str(1);
+            std::regex element_regex("\\s*(-?[0-9]+)\\s*,?");
+            // default constructor = end-of-sequence:
+            std::regex_token_iterator<std::string::iterator> rend;
+
+            std::regex_token_iterator<std::string::iterator> match_iter(elements.begin(), elements.end(), element_regex, 0);
+            while (match_iter != rend)
+            {
+                std::string val = *match_iter++;
+                try
+                {
+                    result.push_back(std::stoi(val));
+                }
+                catch (const std::invalid_argument& e)
+                {
+                    logError("Couldn't read integer value (%s) in setting '%s'. Ignored.\n", val.c_str(), key.c_str());
+                }
+            }
+        }
+    }
+    return result;
+}
 
 }//namespace cura
 

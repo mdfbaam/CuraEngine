@@ -1,4 +1,7 @@
-/** Copyright (C) 2013 David Braam - Released under terms of the AGPLv3 License */
+//Copyright (C) 2013 David Braam
+//Copyright (c) 2017 Ultimaker B.V.
+//CuraEngine is released under the terms of the AGPLv3 or higher.
+
 #ifndef SLICE_DATA_STORAGE_H
 #define SLICE_DATA_STORAGE_H
 
@@ -8,10 +11,9 @@
 #include "utils/NoCopy.h"
 #include "utils/AABB.h"
 #include "mesh.h"
-#include "gcodePlanner.h"
 #include "MeshGroup.h"
 #include "PrimeTower.h"
-#include "GCodePathConfig.h"
+#include "gcodeExport.h" // CoastingConfig
 
 namespace cura 
 {
@@ -37,7 +39,7 @@ public:
     AABB boundaryBox;       //!< The boundaryBox is an axis-aligned bounardy box which is used to quickly check for possible collision between different parts on different layers. It's an optimalization used during skin calculations.
     PolygonsPart outline;       //!< The outline is the first member that is filled, and it's filled with polygons that match a cross section of the 3D model. The first polygon is the outer boundary polygon and the rest are holes.
     Polygons print_outline; //!< An approximation to the outline of what's actually printed, based on the outer wall. Too small parts will be omitted compared to the outline.
-    std::vector<Polygons> insets;         //!< The insets are generated with: an offset of (index * line_width + line_width/2) compared to the outline. The insets are also known as perimeters, and printed inside out.
+    std::vector<Polygons> insets;         //!< The insets are generated with. The insets are also known as perimeters or the walls.
     std::vector<SkinPart> skin_parts;     //!< The skin parts which are filled for 100% with lines and/or insets.
     /*!
      * The areas inside of the mesh.
@@ -74,6 +76,13 @@ public:
      * \return the own infill area
      */
     Polygons& getOwnInfillArea();
+
+    /*!
+     * Return whether this part has printable areas / perimeters
+     */
+    bool isUsed(const SettingsBaseVirtual& mesh_settings) const;
+
+    std::vector<std::pair<Polygons, double>> spaghetti_infill_volumes; //!< For each filling volume on this layer, the area within which to fill and the total volume to fill over the area
 };
 
 /*!
@@ -124,8 +133,10 @@ class SupportLayer
 {
 public:
     Polygons supportAreas; //!< normal support areas
-    Polygons skin; //!< the support areas which are to be printed as denser roofs and/or bottoms. Note that the roof/bottom areas and support areas should be mutually exclusive.
-    Polygons support_mesh; //!< Areas from support meshes
+    Polygons support_bottom; //!< Piece of support below the support and above the model. This must not overlap with supportAreas or support_roof.
+    Polygons support_roof; //!< Piece of support above the support and below the model. This must not overlap with supportAreas or support_bottom.
+    Polygons support_mesh_drop_down; //!< Areas from support meshes which should be supported by more support
+    Polygons support_mesh; //!< Areas from support meshes which should NOT be supported by more support
     Polygons anti_overhang; //!< Areas where no overhang should be detected.
 };
 
@@ -138,7 +149,11 @@ public:
 
     std::vector<SupportLayer> supportLayers;
 
-    SupportStorage() : generated(false), layer_nr_max_filled_layer(-1) { }
+    SupportStorage()
+    : generated(false)
+    , layer_nr_max_filled_layer(-1)
+    {
+    }
     ~SupportStorage(){ supportLayers.clear(); }
 };
 /******************/
@@ -152,27 +167,16 @@ public:
 
     int layer_nr_max_filled_layer; //!< the layer number of the uppermost layer with content (modified while infill meshes are processed)
 
-    GCodePathConfig inset0_config;
-    GCodePathConfig insetX_config;
-    GCodePathConfig skin_config;
-    GCodePathConfig perimeter_gap_config;
-    std::vector<GCodePathConfig> infill_config;
-
+    std::vector<int> infill_angles; //!< a list of angle values (in degrees) which is cycled through to determine the infill angle of each layer
+    std::vector<int> skin_angles; //!< a list of angle values (in degrees) which is cycled through to determine the skin angle of each layer
     SubDivCube* base_subdiv_cube;
 
     SliceMeshStorage(SettingsBaseVirtual* settings, unsigned int slice_layer_count)
     : SettingsMessenger(settings)
     , layer_nr_max_filled_layer(0)
-    , inset0_config(PrintFeatureType::OuterWall)
-    , insetX_config(PrintFeatureType::InnerWall)
-    , skin_config(PrintFeatureType::Skin)
-    , perimeter_gap_config(PrintFeatureType::Skin)
     , base_subdiv_cube(nullptr)
     {
         layers.resize(slice_layer_count);
-        infill_config.reserve(MAX_INFILL_COMBINE);
-        for(int n=0; n<MAX_INFILL_COMBINE; n++)
-            infill_config.emplace_back(PrintFeatureType::Infill);
     }
 
     virtual ~SliceMeshStorage();
@@ -191,17 +195,7 @@ public:
     std::vector<RetractionConfig> retraction_config_per_extruder; //!< Retraction config per extruder.
     std::vector<RetractionConfig> extruder_switch_retraction_config_per_extruder; //!< Retraction config per extruder for when performing an extruder switch
 
-    std::vector<GCodePathConfig> travel_config_per_extruder; //!< The config used for travel moves (only speed is set!)
-
-    std::vector<GCodePathConfig> skirt_brim_config; //!< Configuration for skirt and brim per extruder.
     std::vector<CoastingConfig> coasting_config; //!< coasting config per extruder
-
-    GCodePathConfig raft_base_config;
-    GCodePathConfig raft_interface_config;
-    GCodePathConfig raft_surface_config;
-
-    GCodePathConfig support_config;
-    GCodePathConfig support_skin_config; //!< The config to use to print the dense roofs and bottoms of support
 
     SupportStorage support;
 
@@ -212,25 +206,13 @@ public:
     std::vector<int> max_print_height_per_extruder; //!< For each extruder the highest layer number at which it is used.
     std::vector<size_t> max_print_height_order; //!< Ordered indices into max_print_height_per_extruder: back() will return the extruder number with the highest print height.
 
+    std::vector<int> spiralize_seam_vertex_indices; //!< the index of the seam vertex for each layer
+    std::vector<Polygons* > spiralize_wall_outlines; //!< the wall outline polygons for each layer
+
     PrimeTower primeTower;
 
     std::vector<Polygons> oozeShield;        //oozeShield per layer
     Polygons draft_protection_shield; //!< The polygons for a heightened skirt which protects from warping by gusts of wind and acts as a heated chamber.
-
-    /*!
-     * Construct the initial retraction_config_per_extruder
-     */
-    std::vector<RetractionConfig> initializeRetractionConfigs();
-
-    /*!
-     * Construct the initial travel_config_per_extruder
-     */
-    std::vector<GCodePathConfig> initializeTravelConfigs();
-
-    /*!
-     * Construct the initial skirt & brim configurations for each extruder.
-     */
-    std::vector<GCodePathConfig> initializeSkirtBrimConfigs();
 
     /*!
      * \brief Creates a new slice data storage that stores the slice data of the
@@ -281,6 +263,20 @@ public:
      * \return a vector of bools indicating whether the extruder with corresponding index is used in this layer.
      */
     std::vector<bool> getExtrudersUsed(int layer_nr) const;
+
+    /*!
+     * Gets whether prime blob is enabled for the given extruder number.
+     *
+     * \param extruder_nr the extruder number to check.
+     * \return a bool indicating whether prime blob is enabled for the given extruder number.
+     */
+    bool getExtruderPrimeBlobEnabled(int extruder_nr) const;
+
+private:
+    /*!
+     * Construct the retraction_config_per_extruder
+     */
+    std::vector<RetractionConfig> initializeRetractionConfigs();
 };
 
 }//namespace cura

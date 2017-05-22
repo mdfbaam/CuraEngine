@@ -1,4 +1,4 @@
-//Copyright (c) 2016 Ultimaker B.V.
+//Copyright (c) 2017 Ultimaker B.V.
 //CuraEngine is released under the terms of the AGPLv3 or higher.
 
 #include "sliceDataStorage.h"
@@ -22,6 +22,39 @@ Polygons& SliceLayerPart::getOwnInfillArea()
     }
 }
 
+bool SliceLayerPart::isUsed(const SettingsBaseVirtual& mesh_settings) const
+{
+    if (mesh_settings.getSettingAsCount("wall_line_count") > 0 && insets.size() > 0)
+    { // note that in case wall line count is zero, the outline was pushed onto the insets
+        return true;
+    }
+    if (skin_parts.size() > 0)
+    {
+        return true;
+    }
+    if (mesh_settings.getSettingBoolean("spaghetti_infill_enabled"))
+    {
+        if (spaghetti_infill_volumes.size() > 0)
+        {
+            return true;
+        }
+    }
+    else if (mesh_settings.getSettingInMicrons("infill_line_distance") > 0)
+    {
+        for (const std::vector<Polygons>& infill_area_per_combine : infill_area_per_combine_per_density)
+        {
+            for (const Polygons& area : infill_area_per_combine)
+            {
+                if (area.size() > 0)
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
 Polygons SliceLayer::getOutlines(bool external_polys_only) const
 {
     Polygons ret;
@@ -35,7 +68,7 @@ void SliceLayer::getOutlines(Polygons& result, bool external_polys_only) const
     {
         if (external_polys_only)
         {
-            result.add(const_cast<SliceLayerPart&>(part).outline.outerPolygon()); // TODO: make a const version of outerPolygon()
+            result.add(part.outline.outerPolygon());
         }
         else 
         {
@@ -57,12 +90,12 @@ void SliceLayer::getSecondOrInnermostWalls(Polygons& layer_walls) const
     {
         // we want the 2nd inner walls
         if (part.insets.size() >= 2) {
-            layer_walls.add(const_cast<SliceLayerPart&>(part).insets[1]); // TODO const cast!
+            layer_walls.add(part.insets[1]);
             continue;
         }
         // but we'll also take the inner wall if the 2nd doesn't exist
         if (part.insets.size() == 1) {
-            layer_walls.add(const_cast<SliceLayerPart&>(part).insets[0]); // TODO const cast!
+            layer_walls.add(part.insets[0]);
             continue;
         }
         // offset_from_outlines was so large that it completely destroyed our isle,
@@ -87,38 +120,11 @@ std::vector<RetractionConfig> SliceDataStorage::initializeRetractionConfigs()
     return ret;
 }
 
-std::vector<GCodePathConfig> SliceDataStorage::initializeTravelConfigs()
-{
-    std::vector<GCodePathConfig> ret;
-    for (int extruder = 0; extruder < meshgroup->getExtruderCount(); extruder++)
-    {
-        travel_config_per_extruder.emplace_back(PrintFeatureType::MoveCombing);
-    }
-    return ret;
-}
-
-std::vector<GCodePathConfig> SliceDataStorage::initializeSkirtBrimConfigs()
-{
-    std::vector<GCodePathConfig> ret;
-    for (int extruder = 0; extruder < meshgroup->getExtruderCount(); extruder++)
-    {
-        skirt_brim_config.emplace_back(PrintFeatureType::SkirtBrim);
-    }
-    return ret;
-}
-
 SliceDataStorage::SliceDataStorage(MeshGroup* meshgroup) : SettingsMessenger(meshgroup),
     meshgroup(meshgroup != nullptr ? meshgroup : new MeshGroup(FffProcessor::getInstance())), //If no mesh group is provided, we roll our own.
     print_layer_count(0),
     retraction_config_per_extruder(initializeRetractionConfigs()),
     extruder_switch_retraction_config_per_extruder(initializeRetractionConfigs()),
-    travel_config_per_extruder(initializeTravelConfigs()),
-    skirt_brim_config(initializeSkirtBrimConfigs()),
-    raft_base_config(PrintFeatureType::SupportInterface),
-    raft_interface_config(PrintFeatureType::Support),
-    raft_surface_config(PrintFeatureType::SupportInterface),
-    support_config(PrintFeatureType::Support),
-    support_skin_config(PrintFeatureType::SupportInterface),
     max_print_height_second_to_last_extruder(-1),
     primeTower(*this)
 {
@@ -163,7 +169,7 @@ Polygons SliceDataStorage::getLayerOutlines(int layer_nr, bool include_helper_pa
                 }
                 const SliceLayer& layer = mesh.layers[layer_nr];
                 layer.getOutlines(total, external_polys_only);
-                if (const_cast<SliceMeshStorage&>(mesh).getSettingAsSurfaceMode("magic_mesh_surface_mode") != ESurfaceMode::NORMAL) // TODO: make all getSetting functions const??
+                if (mesh.getSettingAsSurfaceMode("magic_mesh_surface_mode") != ESurfaceMode::NORMAL)
                 {
                     total = total.unionPolygons(layer.openPolyLines.offsetPolyLine(100));
                 }
@@ -174,7 +180,8 @@ Polygons SliceDataStorage::getLayerOutlines(int layer_nr, bool include_helper_pa
             if (support.generated) 
             {
                 total.add(support.supportLayers[std::max(0, layer_nr)].supportAreas);
-                total.add(support.supportLayers[std::max(0, layer_nr)].skin);
+                total.add(support.supportLayers[std::max(0, layer_nr)].support_bottom);
+                total.add(support.supportLayers[std::max(0, layer_nr)].support_roof);
             }
             if (primeTower.enabled)
             {
@@ -207,7 +214,7 @@ Polygons SliceDataStorage::getLayerSecondOrInnermostWalls(int layer_nr, bool inc
             {
                 const SliceLayer& layer = mesh.layers[layer_nr];
                 layer.getSecondOrInnermostWalls(total);
-                if (const_cast<SliceMeshStorage&>(mesh).getSettingAsSurfaceMode("magic_mesh_surface_mode") != ESurfaceMode::NORMAL) // TODO: make getSetting const? make settings.setting_values mapping mutable??
+                if (mesh.getSettingAsSurfaceMode("magic_mesh_surface_mode") != ESurfaceMode::NORMAL)
                 {
                     total = total.unionPolygons(layer.openPolyLines.offsetPolyLine(100));
                 }
@@ -218,7 +225,8 @@ Polygons SliceDataStorage::getLayerSecondOrInnermostWalls(int layer_nr, bool inc
             if (support.generated) 
             {
                 total.add(support.supportLayers[std::max(0, layer_nr)].supportAreas);
-                total.add(support.supportLayers[std::max(0, layer_nr)].skin);
+                total.add(support.supportLayers[std::max(0, layer_nr)].support_bottom);
+                total.add(support.supportLayers[std::max(0, layer_nr)].support_roof);
             }
             if (primeTower.enabled)
             {
@@ -255,9 +263,22 @@ std::vector<bool> SliceDataStorage::getExtrudersUsed() const
 
     // support
     // support is presupposed to be present...
-    ret[getSettingAsIndex("support_extruder_nr_layer_0")] = true;
-    ret[getSettingAsIndex("support_infill_extruder_nr")] = true;
-    ret[getSettingAsIndex("support_interface_extruder_nr")] = true;
+    for (const SliceMeshStorage& mesh : meshes)
+    {
+        if (mesh.getSettingBoolean("support_enable") || mesh.getSettingBoolean("support_mesh"))
+        {
+            ret[getSettingAsIndex("support_extruder_nr_layer_0")] = true;
+            ret[getSettingAsIndex("support_infill_extruder_nr")] = true;
+            if (getSettingBoolean("support_roof_enable"))
+            {
+                ret[getSettingAsIndex("support_roof_extruder_nr")] = true;
+            }
+            if (getSettingBoolean("support_bottom_enable"))
+            {
+                ret[getSettingAsIndex("support_bottom_extruder_nr")] = true;
+            }
+        }
+    }
 
     // all meshes are presupposed to actually have content
     for (const SliceMeshStorage& mesh : meshes)
@@ -324,21 +345,25 @@ std::vector<bool> SliceDataStorage::getExtrudersUsed(int layer_nr) const
             const SupportLayer& support_layer = support.supportLayers[layer_nr];
             if (layer_nr == 0)
             {
-                if (support_layer.supportAreas.size() > 0)
+                if (!support_layer.supportAreas.empty())
                 {
                     ret[getSettingAsIndex("support_extruder_nr_layer_0")] = true;
                 }
             }
             else
             {
-                if (support_layer.supportAreas.size() > 0)
+                if (!support_layer.supportAreas.empty())
                 {
                     ret[getSettingAsIndex("support_infill_extruder_nr")] = true;
                 }
             }
-            if (support_layer.skin.size() > 0)
+            if (!support_layer.support_bottom.empty())
             {
-                ret[getSettingAsIndex("support_interface_extruder_nr")] = true;
+                ret[getSettingAsIndex("support_bottom_extruder_nr")] = true;
+            }
+            if (!support_layer.support_roof.empty())
+            {
+                ret[getSettingAsIndex("support_roof_extruder_nr")] = true;
             }
         }
     }
@@ -352,39 +377,28 @@ std::vector<bool> SliceDataStorage::getExtrudersUsed(int layer_nr) const
                 continue;
             }
             const SliceLayer& layer = mesh.layers[layer_nr];
-            if (layer.parts.size() > 0)
+            for (const SliceLayerPart& part : layer.parts)
             {
-                ret[mesh.getSettingAsIndex("extruder_nr")] = true;
+                if (part.isUsed(mesh))
+                {
+                    ret[mesh.getSettingAsIndex("extruder_nr")] = true;
+                    break;
+                }
             }
         }
     }
     return ret;
 }
 
+bool SliceDataStorage::getExtruderPrimeBlobEnabled(int extruder_nr) const
+{
+    if (extruder_nr >= meshgroup->getExtruderCount())
+    {
+        return false;
+    }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    const ExtruderTrain *train = meshgroup->getExtruderTrain(extruder_nr);
+    return train->getSettingBoolean("prime_blob_enable");
+}
 
 } // namespace cura

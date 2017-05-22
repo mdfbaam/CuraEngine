@@ -12,6 +12,12 @@ WallsComputation::WallsComputation(int wall_0_inset, int line_width_0, int line_
 {
 }
 
+/*
+ * This function is executed in a parallel region based on layer_nr.
+ * When modifying make sure any changes does not introduce data races.
+ *
+ * generateInsets only reads and writes data for the current layer
+ */
 void WallsComputation::generateInsets(SliceLayerPart* part)
 {
     if (insetCount == 0)
@@ -43,7 +49,7 @@ void WallsComputation::generateInsets(SliceLayerPart* part)
         {
             if (recompute_outline_based_on_outer_wall)
             {
-                part->print_outline = part->insets[0].offset(line_width_0 / 2);
+                part->print_outline = part->insets[0].offset(line_width_0 / 2, ClipperLib::jtSquare);
             }
             else
             {
@@ -58,6 +64,12 @@ void WallsComputation::generateInsets(SliceLayerPart* part)
     }
 }
 
+/*
+ * This function is executed in a parallel region based on layer_nr.
+ * When modifying make sure any changes does not introduce data races.
+ *
+ * generateInsets only reads and writes data for the current layer
+ */
 void WallsComputation::generateInsets(SliceLayer* layer)
 {
     for(unsigned int partNr = 0; partNr < layer->parts.size(); partNr++)

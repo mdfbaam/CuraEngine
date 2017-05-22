@@ -6,6 +6,7 @@
 #include <unordered_set>
 
 #include "../utils/polygonUtils.h"
+#include "../utils/linearAlg2D.h"
 #include "../utils/PolygonsPointIndex.h"
 #include "../sliceDataStorage.h"
 #include "../utils/SVG.h"
@@ -22,7 +23,7 @@ Polygons& Comb::getBoundaryOutside()
     return *boundary_outside;
 }
   
-Comb::Comb(SliceDataStorage& storage, int layer_nr, Polygons& comb_boundary_inside, int64_t comb_boundary_offset, bool travel_avoid_other_parts, int64_t travel_avoid_distance)
+Comb::Comb(const SliceDataStorage& storage, int layer_nr, const Polygons& comb_boundary_inside, int64_t comb_boundary_offset, bool travel_avoid_other_parts, int64_t travel_avoid_distance)
 : storage(storage)
 , layer_nr(layer_nr)
 , offset_from_outlines(comb_boundary_offset) // between second wall and infill / other walls
@@ -31,7 +32,7 @@ Comb::Comb(SliceDataStorage& storage, int layer_nr, Polygons& comb_boundary_insi
 , offset_from_inside_to_outside(offset_from_outlines + offset_from_outlines_outside)
 , max_crossing_dist2(offset_from_inside_to_outside * offset_from_inside_to_outside * 2) // so max_crossing_dist = offset_from_inside_to_outside * sqrt(2) =approx 1.5 to allow for slightly diagonal crossings and slightly inaccurate crossing computation
 , avoid_other_parts(travel_avoid_other_parts)
-, boundary_inside( comb_boundary_inside )
+, boundary_inside( comb_boundary_inside ) // copy the boundary, because the partsView_inside will reorder the polygons
 , partsView_inside( boundary_inside.splitIntoPartsView() ) // WARNING !! changes the order of boundary_inside !!
 , inside_loc_to_line(PolygonUtils::createLocToLineGrid(boundary_inside, comb_boundary_offset))
 , boundary_outside(
@@ -213,7 +214,7 @@ Comb::Crossing::Crossing(const Point& dest_point, const bool dest_is_inside, con
 {
     if (dest_is_inside)
     {
-        dest_crossing_poly = boundary_inside[dest_part_boundary_crossing_poly_idx]; // initialize with most obvious poly, cause mostly a combing move will move outside the part, rather than inside a hole in the part
+        dest_crossing_poly.emplace(boundary_inside[dest_part_boundary_crossing_poly_idx]); // initialize with most obvious poly, cause mostly a combing move will move outside the part, rather than inside a hole in the part
     }
 }
 
@@ -277,8 +278,7 @@ void Comb::Crossing::findCrossingInOrMid(const PartsView& partsView_inside, cons
             result = dest_point;
         }
 
-        int64_t max_dist2 = std::numeric_limits<int64_t>::max();
-        ClosestPolygonPoint crossing_1_in_cp = PolygonUtils::ensureInsideOrOutside(dest_part, result, boundary_crossing_point, offset_dist_to_get_from_on_the_polygon_to_outside, max_dist2, &boundary_inside, inside_loc_to_line, close_towards_start_penalty_function);
+        ClosestPolygonPoint crossing_1_in_cp = PolygonUtils::ensureInsideOrOutside(dest_part, result, boundary_crossing_point, offset_dist_to_get_from_on_the_polygon_to_outside, &boundary_inside, inside_loc_to_line, close_towards_start_penalty_function);
         if (crossing_1_in_cp.isValid())
         {
             dest_crossing_poly = crossing_1_in_cp.poly;
@@ -332,7 +332,7 @@ bool Comb::Crossing::findOutside(const Polygons& outside, const Point close_to, 
 }
 
 
-std::shared_ptr<std::pair<ClosestPolygonPoint, ClosestPolygonPoint>> Comb::Crossing::findBestCrossing(const Polygons& outside, const PolygonRef from, const Point estimated_start, const Point estimated_end, Comb& comber)
+std::shared_ptr<std::pair<ClosestPolygonPoint, ClosestPolygonPoint>> Comb::Crossing::findBestCrossing(const Polygons& outside, ConstPolygonRef from, const Point estimated_start, const Point estimated_end, Comb& comber)
 {
     ClosestPolygonPoint* best_in = nullptr;
     ClosestPolygonPoint* best_out = nullptr;

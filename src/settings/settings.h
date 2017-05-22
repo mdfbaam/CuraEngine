@@ -139,7 +139,7 @@ enum class EZSeamType
 {
     RANDOM,
     SHORTEST,
-    BACK
+    USER_SPECIFIED
 };
 
 enum class ESurfaceMode
@@ -251,8 +251,9 @@ public:
     EZSeamType getSettingAsZSeamType(std::string key) const;
     ESurfaceMode getSettingAsSurfaceMode(std::string key) const;
     FillPerimeterGapMode getSettingAsFillPerimeterGapMode(std::string key) const;
-    CombingMode getSettingAsCombingMode(std::string key);
-    SupportDistPriority getSettingAsSupportDistPriority(std::string key);
+    CombingMode getSettingAsCombingMode(std::string key) const;
+    SupportDistPriority getSettingAsSupportDistPriority(std::string key) const;
+    std::vector<int> getSettingAsIntegerList(std::string key) const;
 };
 
 class SettingRegistry;
